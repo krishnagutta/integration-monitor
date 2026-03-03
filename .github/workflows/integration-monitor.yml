@@ -40,7 +40,7 @@ jobs:
           JIRA_BASE_URL: https://jira.lyft.net
           JIRA_USERNAME: ${{ secrets.JIRA_USERNAME }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LYFT_AI_PROXY_TOKEN: ${{ secrets.LYFT_AI_PROXY_TOKEN }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID || 'C09KBAUMZMJ' }}
           LOOKBACK_HOURS: 1

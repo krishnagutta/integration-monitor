@@ -1,13 +1,14 @@
 import json
 import logging
 
-import anthropic
+import requests
 
 import config
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-sonnet-4-20250514"
+PROXY_URL = "https://aiproxymodelsgateway.lyft.net/v1/chat/completions"
+MODEL = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 SYSTEM_PROMPT = """You are an expert Workday integration support engineer at Lyft. Your job is to analyze Workday integration error tickets and classify them so an automated agent can take the right action.
 
@@ -53,7 +54,7 @@ _FALLBACK = {
     "error_type": "UNKNOWN",
     "integration_name": None,
     "affected_records": None,
-    "root_cause_summary": "Could not classify — Claude returned an unparseable response.",
+    "root_cause_summary": "Could not classify — model returned an unparseable response.",
     "recommended_action": "INVESTIGATE",
     "auto_retry_safe": False,
     "priority": "MEDIUM",
@@ -62,9 +63,7 @@ _FALLBACK = {
 
 
 def classify_error(issue_key: str, summary: str, description: str) -> dict:
-    """Use Claude to classify a Jira integration error ticket."""
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-
+    """Use Lyft AI proxy (Claude) to classify a Jira integration error ticket."""
     description_text = description if description else "No description provided."
     user_message = (
         f"Ticket: {issue_key}\n"
@@ -73,20 +72,31 @@ def classify_error(issue_key: str, summary: str, description: str) -> dict:
         "Classify this error and recommend action."
     )
 
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {config.LYFT_AI_PROXY_TOKEN}",
+    }
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        "max_tokens": 1024,
+    }
+
+    raw = ""
     try:
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=1024,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
-        )
-        raw = response.content[0].text.strip()
-        logger.debug("Claude raw response for %s: %s", issue_key, raw[:300])
+        response = requests.post(PROXY_URL, json=payload, headers=headers, timeout=30)
+        logger.debug("Proxy response %s for %s", response.status_code, issue_key)
+        response.raise_for_status()
+
+        raw = response.json()["choices"][0]["message"]["content"].strip()
+        logger.debug("Model raw response for %s: %s", issue_key, raw[:300])
 
         # Strip markdown code fences if present
         if raw.startswith("```"):
             lines = raw.splitlines()
-            # Remove first line (```json or ```) and last line (```)
             raw = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
             raw = raw.strip()
 
@@ -102,8 +112,8 @@ def classify_error(issue_key: str, summary: str, description: str) -> dict:
     except json.JSONDecodeError as e:
         logger.error("JSON parse error for %s: %s. Raw: %s", issue_key, e, raw[:500])
         return _FALLBACK.copy()
-    except anthropic.APIError as e:
-        logger.error("Anthropic API error for %s: %s", issue_key, e)
+    except requests.HTTPError as e:
+        logger.error("Proxy HTTP error for %s: %s", issue_key, e)
         return _FALLBACK.copy()
     except Exception as e:
         logger.error("Unexpected error classifying %s: %s", issue_key, e)
